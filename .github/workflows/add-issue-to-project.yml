@@ -1,0 +1,109 @@
+name: Add Issue to Project and Set Fields
+
+on:
+  issues:
+    types: [opened]
+
+jobs:
+  add-to-project:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Add issue to project
+        uses: actions/add-to-project@v1
+        with:
+          project-url: https://github.com/users/chervinskaa/projects/2
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Set fields
+        uses: actions/github-script@v7
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          script: |
+            const issue = context.payload.issue;
+            const projectNumber = 2;
+            const username = "chervinskaa";
+
+            const project = await github.graphql(`
+              query {
+                user(login: "${username}") {
+                  projectV2(number: ${projectNumber}) {
+                    id
+                  }
+                }
+              }
+            `);
+
+            const projectId = project.user.projectV2.id;
+
+            const items = await github.graphql(`
+              query {
+                node(id: "${issue.node_id}") {
+                  ... on Issue {
+                    projectItems(first: 5) {
+                      nodes {
+                        id
+                      }
+                    }
+                  }
+                }
+              }
+            `);
+
+            if (items.node.projectItems.nodes.length === 0) {
+              throw new Error("Issue was not added to the project");
+            }
+
+            const itemId = items.node.projectItems.nodes[0].id;
+
+            const fields = await github.graphql(`
+              query {
+                node(id: "${projectId}") {
+                  ... on ProjectV2 {
+                    fields(first: 20) {
+                      nodes {
+                        ... on ProjectV2SingleSelectField {
+                          id
+                          name
+                          options {
+                            id
+                            name
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            `);
+
+            const statusField = fields.node.fields.nodes.find(f => f.name === "Status");
+            const priorityField = fields.node.fields.nodes.find(f => f.name === "Priority");
+
+            const statusOption = statusField.options.find(o => o.name === "To Do");
+            const priorityOption = priorityField.options.find(o => o.name === "Medium");
+
+            await github.graphql(`
+              mutation {
+                updateProjectV2ItemFieldValue(
+                  input: {
+                    projectId: "${projectId}"
+                    itemId: "${itemId}"
+                    fieldId: "${statusField.id}"
+                    value: { singleSelectOptionId: "${statusOption.id}" }
+                  }
+                ) { clientMutationId }
+              }
+            `);
+
+            await github.graphql(`
+              mutation {
+                updateProjectV2ItemFieldValue(
+                  input: {
+                    projectId: "${projectId}"
+                    itemId: "${itemId}"
+                    fieldId: "${priorityField.id}"
+                    value: { singleSelectOptionId: "${priorityOption.id}" }
+                  }
+                ) { clientMutationId }
+              }
+            `);
